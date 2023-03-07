@@ -20,66 +20,61 @@ type Filter[T Hash] struct {
 }
 
 // New Bloom filter
+// n The number of elements in the filter
+// p The probabilty of false postives
 // m The number of elements in the BitVector
 // k The number of hash functions to use
-func NewFilter[T Hash](capacity int, errorRate float64, hash HashFunction[T], m, k int) *Filter[T] {
-	if capacity < 1 {
+func NewFilter[T Hash](n int, p float64, hash HashFunction[T], m, k int) *Filter[T] {
+	if n < 1 {
 		panic("capacity must be > 0")
 	}
-	if errorRate >= 1 || errorRate <= 0 {
-		panic(fmt.Sprintf("errorRate must be between 0 and 1, exclusive. Was %v", errorRate))
+	if p >= 1 || p <= 0 {
+		panic(fmt.Sprintf("probabity must be between 0 and 1, exclusive. Was %v", p))
 	}
 	if m < 1 {
-		panic(fmt.Sprintf("The provided capacity and errorRate values would result in an array of length > int.MaxValue. Please reduce either of these values. Capacity: %v, Error rate: %v", capacity, errorRate))
+		panic(fmt.Sprintf("The provided capacity and probabity values would result in an array of length > int.MaxValue. Please reduce either of these values. Capacity: %v, probabity: %v", n, p))
 	}
 
 	return &Filter[T]{
 		count:  k,
 		vector: *bitvector.NewBitVector(m),
+		hash:   hash,
 	}
 }
 
-// New Bloom filter using the optimal size based on the capacity and error rate
-func NewFilterOptimalWithErrorRate[T Hash](capacity int, errorRate float64, hash HashFunction[T]) *Filter[T] {
-	return NewFilter(capacity, errorRate, hash, int(bestM(capacity, errorRate)), int(bestK(capacity, errorRate)))
+// New Bloom filter using the optimal size based on the capacity and probabity
+func NewFilterOptimalWithProbabity[T Hash](n int, p float64, hash HashFunction[T]) *Filter[T] {
+	m := bestM(n, p)
+	return NewFilter(n, p, hash, m, bestK(n, m))
 }
 
 // New Bloom filter using the optimal size based on the capacity
-func NewFilterOptimal[T Hash](capacity int, hash HashFunction[T]) *Filter[T] {
-	return NewFilterOptimalWithErrorRate(capacity, bestErrorRate(capacity), hash)
+func NewFilterOptimal[T Hash](n int, hash HashFunction[T]) *Filter[T] {
+	return NewFilterOptimalWithProbabity(n, probabity(n), hash)
 }
 
-func bestErrorRate(capacity int) float64 {
-	c := 1.0 / capacity
+func probabity(n int) float64 {
+	c := 1.0 / float64(n)
 	if c != 0 {
 		return float64(c)
 	}
 
-	// default
-	// http://www.cs.princeton.edu/courses/archive/spring02/cs493/lec7.pdf
-	return math.Pow(0.6185, float64(math.MaxInt32/capacity))
-}
-func bestK(capacity int, errorRate float64) float64 {
-	return math.Round(math.Log(2.0) * bestM(capacity, errorRate) / float64(capacity))
+	return math.Pow(0.6185, float64(math.MaxInt32/n))
 }
 
-func bestM(capacity int, errorRate float64) float64 {
-	//t := (1.0 / math.Pow(2, math.Log(2.0)))
-	return math.Ceil(float64(capacity) * math.Log(errorRate))
+// the number of bits
+func bestM(n int, p float64) int {
+	return int(math.Round(-float64(n) * math.Log(p) / (math.Pow(math.Log(2), 2))))
+}
+
+// the number of hash functions
+func bestK(n, m int) int {
+	return int(math.Round(float64(m) / float64(n) * math.Log(2)))
 }
 
 // The number of true bits.
 func (s *Filter[T]) TrueBits() int {
-	output := 0
-	iterator := s.vector.Enumerate()
-	for iterator.HasNext() {
-		v, _ := iterator.Next()
-		if v {
-			output++
-		}
-	}
-	return output
-
+	return s.vector.TrueBits()
 }
 
 // The ratio of false to true bits in the BitVector.
