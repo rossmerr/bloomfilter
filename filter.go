@@ -28,7 +28,7 @@ func NewFilter[T Hash](n int, p float64, hash HashFunction[T], m, k int) *Filter
 		panic(fmt.Sprintf("probabity must be between 0 and 1, exclusive. Was %v", p))
 	}
 	if m < 1 {
-		panic(fmt.Sprintf("The provided capacity and probabity values would result in an array of length > int.MaxValue. Please reduce either of these values. Capacity: %v, probabity: %v", n, p))
+		panic(fmt.Sprintf("The provided capacity and probabity values would result in an array of length > math.MaxInt32. Please reduce either of these values. Capacity: %v, probabity: %v", n, p))
 	}
 
 	return &Filter[T]{
