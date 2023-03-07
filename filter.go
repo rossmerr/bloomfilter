@@ -9,10 +9,6 @@ import (
 
 type HashFunction[T Hash] func(T) int
 
-type Hash interface {
-	Sum() int
-}
-
 type Filter[T Hash] struct {
 	count  int
 	vector bitvector.BitVector
