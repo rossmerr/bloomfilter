@@ -21,7 +21,7 @@ func (s *Test) Sum() uint {
 ```go
 obj := &Test{}
 
-filter := bloomfilter.NewFilterOptimal[Test](2000000)
+filter := bloomfilter.NewFilterOptimal[*Test](2000000)
 filter.Add(obj)
 
 match := filter.Contains(obj)
