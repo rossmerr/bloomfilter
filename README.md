@@ -13,7 +13,7 @@ type Test struct {
 
 }
 
-func (s *Test) Sum() int {
+func (s *Test) Sum() uint {
   // your hash function...
 }
 ```
