@@ -1,18 +1,30 @@
 package bloomfilter
 
 import (
+	"bytes"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"math"
 
 	"github.com/rossmerr/bitvector"
 )
 
-type HashFunction[T Hash] func(T) int
+type HashFunction func([]byte) uint
 
 type Filter[T Hash] struct {
-	count  int
+	length uint
 	vector bitvector.BitVector
-	hash   HashFunction[T]
+	hash   HashFunction
+}
+
+type FilterOption[T Hash] func(*Filter[T])
+
+func WithHash[T Hash](hash HashFunction) FilterOption[T] {
+	return func(s *Filter[T]) {
+		s.hash = hash
+	}
+
 }
 
 // New Bloom filter
@@ -20,7 +32,7 @@ type Filter[T Hash] struct {
 // p The probabilty of false postives
 // m The number of elements in the BitVector
 // k The number of hash functions to use
-func NewFilter[T Hash](n int, p float64, hash HashFunction[T], m, k int) *Filter[T] {
+func NewFilter[T Hash](n uint, p float64, m, k uint, opts ...FilterOption[T]) *Filter[T] {
 	if n < 1 {
 		panic("capacity must be > 0")
 	}
@@ -31,25 +43,39 @@ func NewFilter[T Hash](n int, p float64, hash HashFunction[T], m, k int) *Filter
 		panic(fmt.Sprintf("The provided capacity and probabity values would result in an array of length > math.MaxInt32. Please reduce either of these values. Capacity: %v, probabity: %v", n, p))
 	}
 
-	return &Filter[T]{
-		count:  k,
-		vector: *bitvector.NewBitVector(m),
+	var hasher = sha1.New()
+	hash := func(data []byte) uint {
+		hasher.Write([]byte(data))
+		hash := hasher.Sum(nil)
+		hasher.Reset()
+		return uint(binary.LittleEndian.Uint64(hash))
+	}
+
+	filter := &Filter[T]{
+		length: k,
+		vector: *bitvector.NewBitVector(int(m)),
 		hash:   hash,
 	}
+
+	for _, opt := range opts {
+		opt(filter)
+	}
+
+	return filter
 }
 
 // New Bloom filter using the optimal size based on the capacity and probabity
-func NewFilterOptimalWithProbabity[T Hash](n int, p float64, hash HashFunction[T]) *Filter[T] {
+func NewFilterOptimalWithProbabity[T Hash](n uint, p float64, opts ...FilterOption[T]) *Filter[T] {
 	m := bestM(n, p)
-	return NewFilter(n, p, hash, m, bestK(n, m))
+	return NewFilter(n, p, m, bestK(n, m), opts...)
 }
 
 // New Bloom filter using the optimal size based on the capacity
-func NewFilterOptimal[T Hash](n int, hash HashFunction[T]) *Filter[T] {
-	return NewFilterOptimalWithProbabity(n, probabity(n), hash)
+func NewFilterOptimal[T Hash](n uint, opts ...FilterOption[T]) *Filter[T] {
+	return NewFilterOptimalWithProbabity(n, probabity(n), opts...)
 }
 
-func probabity(n int) float64 {
+func probabity(n uint) float64 {
 	c := 1.0 / float64(n)
 	if c != 0 {
 		return float64(c)
@@ -59,13 +85,13 @@ func probabity(n int) float64 {
 }
 
 // the number of bits
-func bestM(n int, p float64) int {
-	return int(math.Round(-float64(n) * math.Log(p) / (math.Pow(math.Log(2), 2))))
+func bestM(n uint, p float64) uint {
+	return uint(math.Round(-float64(n) * math.Log(p) / (math.Pow(math.Log(2), 2))))
 }
 
 // the number of hash functions
-func bestK(n, m int) int {
-	return int(math.Round(float64(m) / float64(n) * math.Log(2)))
+func bestK(n, m uint) uint {
+	return uint(math.Round(float64(m) / float64(n) * math.Log(2)))
 }
 
 // The number of true bits.
@@ -80,30 +106,55 @@ func (s *Filter[T]) Truthiness() float64 {
 
 // Adds a new item to the filter. It cannot be removed.
 func (s *Filter[T]) Add(item T) {
-	hash := item.Sum()
-	secondaryHash := s.hash(item)
-	for i := 0; i < s.count; i++ {
-		hash := s.computeHash(hash, secondaryHash, i)
+	firstHash, secondaryHash := s.splitHash(item)
+
+	for i := uint(0); i < s.length; i++ {
+		hash := s.computeHash(firstHash, secondaryHash, i)
 		s.vector.Set(hash, true)
 	}
 }
 
-func (s *Filter[T]) computeHash(hash, secondaryHash, i int) int {
+func (s *Filter[T]) Length(item T) int {
+	return int(s.length)
+}
+
+func (s *Filter[T]) computeHash(hash, secondaryHash, i uint) int {
 	resultingHash := math.Mod(float64(hash)+(float64(i)*float64(secondaryHash)), float64(s.vector.Length()))
 	return int(math.Abs(resultingHash))
 }
 
 // Checks for the existance of the item in the filter for a given probability.
 func (s *Filter[T]) Contains(item T) bool {
-	hash := item.Sum()
-	secondaryHash := s.hash(item)
+	firstHash, secondaryHash := s.splitHash(item)
 
-	for i := 0; i < s.count; i++ {
-		hash := s.computeHash(hash, secondaryHash, i)
+	for i := uint(0); i < s.length; i++ {
+		hash := s.computeHash(firstHash, secondaryHash, i)
 		if !s.vector.Get(hash) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func (s *Filter[T]) splitHash(item T) (uint, uint) {
+	hash := item.Sum()
+	arr := intToBytes(hash)
+	middle := int(math.Ceil(float64(len(arr)) / 2))
+	first := arr[:middle]
+	second := arr[middle:]
+	firstHash := s.hash(first)
+	secondaryHash := s.hash(second)
+	return firstHash, secondaryHash
+}
+
+func intToBytes(num uint) []byte {
+	buff := new(bytes.Buffer)
+	bigOrLittleEndian := binary.LittleEndian
+	err := binary.Write(buff, bigOrLittleEndian, uint64(num))
+	if err != nil {
+		panic(err)
+	}
+
+	return buff.Bytes()
 }

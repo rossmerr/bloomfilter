@@ -1,5 +1,5 @@
 package bloomfilter
 
 type Hash interface {
-	Sum() int
+	Sum() uint
 }
